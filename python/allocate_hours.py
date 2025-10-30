@@ -3,7 +3,8 @@
 
 Allocate per-day working hours across percentage categories using either a
 sequential drift-corrected algorithm or an "optimal" discrete quota
-allocation. Output is rounded to a configurable resolution (default 0.5h).
+allocation. Output is rounded to a configurable resolution (default 0.5h,
+supports down to 0.01h for precise tracking).
 
 Core idea:
   1. You supply total hours for each day (default days auto-assigned Mon..).
@@ -87,13 +88,16 @@ Comprehensive Examples:
   3) Use optimal algorithm with remainder display (custom resolution):
      python allocate_hours.py --hours 0 2 7.5 7.5 7.5 --percent 0.5 0.3 0.1 --show-remainder -a optimal --resolution 0.25
 
-  4) Force full allocation by normalization:
+  4) High-precision tracking (0.01 hour = ~36 seconds):
+     python allocate_hours.py --hours 8.5 --percent 0.6 0.4 --resolution 0.01
+
+  5) Force full allocation by normalization:
      python allocate_hours.py --hours 0 2 7.5 7.5 7.5 --percent 0.5 0.3 0.2 --normalize --sum
 
-  5) Attempt to fill remainder into last category:
+  6) Attempt to fill remainder into last category:
      python allocate_hours.py --hours 0 2 7.5 7.5 7.5 --percent 0.5 0.3 0.1 --fill-remainder --show-remainder
 
-  6) Enforce zero remainder (strict mode):
+  7) Enforce zero remainder (strict mode):
      python allocate_hours.py --hours 0 2 7.5 7.5 7.5 --percent 0.5 0.3 0.1 --strict --sum
 
   7) Export results:
@@ -116,7 +120,7 @@ CLI Summary (quick reference):
     --days / -d <names>           Optional explicit day names matching hours
     --percent / -p <floats>       Category percentages (<=1 unless --normalize)
     --algorithm / -a opt|seq      Allocation strategy (optimal|sequential)
-    --resolution / -r <float>     Rounding resolution (default 0.5)
+    --resolution / -r <float>     Rounding resolution (default 0.5, supports 0.01+)
     --normalize                   Scale percentages to sum to 1.0
     --fill-remainder              Fill leftover hours into last category
     --strict                      Enforce zero remainder (error if cannot fill)
@@ -139,6 +143,15 @@ def round_to_resolution(x: float, resolution: float) -> float:
     return units * resolution
 
 
+def get_decimal_places(resolution: float) -> int:
+    """Get the number of decimal places needed to display the resolution precisely."""
+    # Convert to string and count digits after decimal point
+    resolution_str = f"{resolution:.10f}".rstrip("0").rstrip(".")
+    if "." in resolution_str:
+        return len(resolution_str.split(".")[1])
+    return 0
+
+
 def _render_table(
     allocations: dict[str, list[float]],
     percentages: list[float],
@@ -146,20 +159,27 @@ def _render_table(
     remainder: float,
     show_remainder: bool,
     targets: list[float],
+    resolution: float,
 ):
+    decimal_places = get_decimal_places(resolution)
     headers = ["Day", "Total"] + [f"{int(p * 100)} %" for p in percentages]
     rows = []
     for day, vals in allocations.items():
-        rows.append([day, f"{vals[0]:.1f}"] + [f"{v:.1f}" for v in vals[1:]])
+        rows.append(
+            [day, f"{vals[0]:.{decimal_places}f}"]
+            + [f"{v:.{decimal_places}f}" for v in vals[1:]]
+        )
     if include_sum:
         cols = len(next(iter(allocations.values())))
         sums = [sum(v[i] for v in allocations.values()) for i in range(cols)]
-        rows.append(["Sum"] + [f"{s:.1f}" for s in sums])
+        rows.append(["Sum"] + [f"{s:.{decimal_places}f}" for s in sums])
         if len(targets) == cols - 1:
             diffs = [sums[i + 1] - targets[i] for i in range(cols - 1)]
-            rows.append(["Delta"] + ["-"] + [f"{d:+.1f}" for d in diffs])
+            rows.append(["Delta"] + ["-"] + [f"{d:+.{decimal_places}f}" for d in diffs])
     if show_remainder and remainder > 0.0001:
-        rows.append(["Remainder", f"{remainder:.1f}"] + ["" for _ in percentages])
+        rows.append(
+            ["Remainder", f"{remainder:.{decimal_places}f}"] + ["" for _ in percentages]
+        )
     col_widths = [
         max(len(str(cell)) for cell in col) + 2
         for col in zip(headers, *rows, strict=True)
@@ -308,7 +328,7 @@ if __name__ == "__main__":
         "-r",
         type=float,
         default=0.5,
-        help="Rounding resolution in hours (e.g. 1, 0.5, 0.25, 0.2). Default 0.5",
+        help="Rounding resolution in hours (e.g. 1, 0.5, 0.25, 0.1, 0.01). Default 0.5",
     )
     parser.add_argument(
         "--fill-remainder",
@@ -475,6 +495,7 @@ if __name__ == "__main__":
         remainder,
         args.show_remainder,
         targets,
+        resolution,
     )
 
     # CSV export

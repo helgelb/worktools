@@ -5,6 +5,7 @@ import pytest
 from allocate_hours import (
     allocate_optimal,
     allocate_sequential,
+    get_decimal_places,
     round_to_resolution,
 )
 
@@ -25,6 +26,13 @@ class TestRoundToResolution:
         assert round_to_resolution(1.15, 0.25) == 1.25
         assert round_to_resolution(1.4, 0.25) == 1.5
 
+    def test_round_to_fine_resolution(self):
+        """Test rounding to 0.01 hour resolution (high precision)."""
+        assert round_to_resolution(1.234, 0.01) == pytest.approx(1.23)
+        assert round_to_resolution(1.235, 0.01) == pytest.approx(1.24)
+        assert round_to_resolution(1.236, 0.01) == pytest.approx(1.24)
+        assert round_to_resolution(0.567, 0.01) == pytest.approx(0.57)
+
     def test_round_to_whole_hour(self):
         """Test rounding to whole hour resolution."""
         assert round_to_resolution(0.4, 1.0) == 0.0
@@ -38,6 +46,14 @@ class TestRoundToResolution:
             round_to_resolution(1.0, 0)
         with pytest.raises(ValueError):
             round_to_resolution(1.0, -0.5)
+
+    def test_get_decimal_places(self):
+        """Test the get_decimal_places helper function."""
+        assert get_decimal_places(1.0) == 0
+        assert get_decimal_places(0.5) == 1
+        assert get_decimal_places(0.25) == 2
+        assert get_decimal_places(0.01) == 2
+        assert get_decimal_places(0.001) == 3
 
 
 class TestAllocateOptimal:
