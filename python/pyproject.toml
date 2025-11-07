@@ -15,20 +15,6 @@ maintainers = [
     {name = "Helge Bjerke", email = "helgelb@hotmail.com"}
 ]
 keywords = ["productivity", "tools", "automation", "utilities", "work"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Office/Business",
-    "Topic :: Utilities",
-]
 requires-python = ">=3.10"
 dependencies = []
 
@@ -52,6 +38,8 @@ Repository = "https://github.com/helgelb/worktools"
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
+[tool.hatch.build]
+package-mode = false
 [tool.ruff]
 target-version = "py310"
 line-length = 88

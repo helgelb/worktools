@@ -59,6 +59,12 @@ Arguments (CLI):
       Adds a "Remainder" row showing unallocated hours (if any).
       Example: --show-remainder
 
+  --show-actual-percent
+      Adds an "Actual %" row showing the achieved percentage (per category) computed
+      from allocated hours vs the total allocated hours. Values are presented as
+      percentages (0-100%) formatted to match the chosen resolution's decimal places.
+      Example: --sum --show-actual-percent
+
   --sum / -s
       Adds a "Sum" row plus a Delta row showing difference between target and
       actual allocated category totals (allocated - target).
@@ -128,6 +134,7 @@ CLI Summary (quick reference):
     --sum / -s                    Show Sum and Delta rows
     --csv <path>                  Export table to CSV
     --json <path>                 Export structured data to JSON
+    --show-actual-percent         Show Actual % row (achieved percentages per category)
     -h / --help                   Show built-in argparse help
 """
 
@@ -152,6 +159,22 @@ def get_decimal_places(resolution: float) -> int:
     return 0
 
 
+def compute_actual_percentages(allocations: dict[str, list[float]]) -> list[float]:
+    """Return actual achieved percentages for each category (excluding Total).
+
+    allocations: mapping day -> [total, cat1, cat2, ...]
+    returns list of floats in [0,1] for each category (cat1..)
+    """
+    if not allocations:
+        return []
+    cols = len(next(iter(allocations.values())))
+    sums = [sum(v[i] for v in allocations.values()) for i in range(cols)]
+    total = sums[0]
+    if total == 0:
+        return [0.0 for _ in range(cols - 1)]
+    return [s / total for s in sums[1:]]
+
+
 def _render_table(
     allocations: dict[str, list[float]],
     percentages: list[float],
@@ -160,6 +183,7 @@ def _render_table(
     show_remainder: bool,
     targets: list[float],
     resolution: float,
+    show_actual_percent: bool = False,
 ):
     decimal_places = get_decimal_places(resolution)
     headers = ["Day", "Total"] + [f"{int(p * 100)} %" for p in percentages]
@@ -173,6 +197,14 @@ def _render_table(
         cols = len(next(iter(allocations.values())))
         sums = [sum(v[i] for v in allocations.values()) for i in range(cols)]
         rows.append(["Sum"] + [f"{s:.{decimal_places}f}" for s in sums])
+        if show_actual_percent:
+            actuals = compute_actual_percentages(allocations)
+            # format percentage values (multiply by 100)
+            rows.append(
+                ["Actual %"]
+                + [""]
+                + [f"{a * 100:.{decimal_places}f}%" for a in actuals]
+            )
         if len(targets) == cols - 1:
             diffs = [sums[i + 1] - targets[i] for i in range(cols - 1)]
             rows.append(["Delta"] + ["-"] + [f"{d:+.{decimal_places}f}" for d in diffs])
@@ -355,6 +387,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Require zero remainder; attempt to fill and error if impossible.",
     )
+    parser.add_argument(
+        "--show-actual-percent",
+        action="store_true",
+        help="Show actual achieved percentages per category in the table.",
+    )
 
     args = parser.parse_args()
 
@@ -496,6 +533,7 @@ if __name__ == "__main__":
         args.show_remainder,
         targets,
         resolution,
+        show_actual_percent=bool(args.show_actual_percent),
     )
 
     # CSV export
@@ -513,9 +551,13 @@ if __name__ == "__main__":
                     )
                 # Summary rows
                 if args.sum:
+                    # compute number of columns from any allocation row
+                    sample_cols = (
+                        len(next(iter(allocations.values()))) if allocations else 1
+                    )
                     sums = [
                         sum(v[i] for v in allocations.values())
-                        for i in range(len(vals))
+                        for i in range(sample_cols)
                     ]
                     writer.writerow(["Sum"] + [f"{s:.2f}" for s in sums])
                 if args.show_remainder and remainder > 0.0001:

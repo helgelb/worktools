@@ -5,6 +5,7 @@ import pytest
 from allocate_hours import (
     allocate_optimal,
     allocate_sequential,
+    compute_actual_percentages,
     get_decimal_places,
     round_to_resolution,
 )
@@ -198,25 +199,34 @@ class TestIntegration:
                     assert abs(val - round_to_resolution(val, resolution)) < 1e-9
 
     def test_both_algorithms_handle_edge_cases(self):
-        """Test that both algorithms handle edge cases similarly."""
-        test_cases = [
-            # All zero hours
-            ({"mon": 0, "tue": 0}, [0.5, 0.5], 0.5),
-            # Single day with small hours
-            ({"mon": 1.0}, [0.7, 0.3], 0.5),
-            # Uneven distribution
-            ({"mon": 3, "tue": 5, "wed": 2}, [0.4, 0.4, 0.2], 0.5),
-        ]
+        """(Kept for backwards compatibility; main checks are in parametrized test below.)"""
 
-        for days, percentages, resolution in test_cases:
-            opt_alloc, _, _ = allocate_optimal(days, percentages, resolution)
-            seq_alloc, _, _ = allocate_sequential(days, percentages, resolution)
 
-            # Both should handle the case without errors
-            assert len(opt_alloc) == len(days)
-            assert len(seq_alloc) == len(days)
+@pytest.mark.parametrize(
+    "days,percentages,resolution",
+    [
+        ({"mon": 0, "tue": 0}, [0.5, 0.5], 0.5),
+        ({"mon": 1.0}, [0.7, 0.3], 0.5),
+        ({"mon": 3, "tue": 5, "wed": 2}, [0.4, 0.4, 0.2], 0.5),
+    ],
+)
+def test_algorithms_handle_edge_cases_parametrized(days, percentages, resolution):
+    """Parametrized edge cases to ensure both algorithms handle small/odd inputs."""
+    opt_alloc, _, _ = allocate_optimal(days, percentages, resolution)
+    seq_alloc, _, _ = allocate_sequential(days, percentages, resolution)
 
-            # Both should respect day limits
-            for day in days:
-                assert sum(opt_alloc[day][1:]) <= days[day] + 1e-6
-                assert sum(seq_alloc[day][1:]) <= days[day] + 1e-6
+    # Both should handle the case without errors and respect day limits
+    assert len(opt_alloc) == len(days)
+    assert len(seq_alloc) == len(days)
+    for day in days:
+        assert sum(opt_alloc[day][1:]) <= days[day] + 1e-6
+        assert sum(seq_alloc[day][1:]) <= days[day] + 1e-6
+
+
+def test_compute_actual_percentages_simple():
+    alloc = {
+        "monday": [8.0, 5.0, 3.0],
+        "tuesday": [8.0, 4.0, 4.0],
+    }
+    actual = compute_actual_percentages(alloc)
+    assert actual == pytest.approx([9.0 / 16.0, 7.0 / 16.0])
