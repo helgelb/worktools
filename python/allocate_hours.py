@@ -139,6 +139,7 @@ CLI Summary (quick reference):
 """
 
 import argparse
+import json
 from typing import Any
 
 
@@ -152,7 +153,6 @@ def round_to_resolution(x: float, resolution: float) -> float:
 
 def get_decimal_places(resolution: float) -> int:
     """Get the number of decimal places needed to display the resolution precisely."""
-    # Convert to string and count digits after decimal point
     resolution_str = f"{resolution:.10f}".rstrip("0").rstrip(".")
     if "." in resolution_str:
         return len(resolution_str.split(".")[1])
@@ -186,32 +186,51 @@ def _render_table(
     show_actual_percent: bool = False,
 ):
     decimal_places = get_decimal_places(resolution)
-    headers = ["Day", "Total"] + [f"{int(p * 100)} %" for p in percentages]
+    headers = ["Day", "Input"] + [f"{int(p * 100)} %" for p in percentages]
+    if include_sum:
+        headers.append("Sum")
     rows = []
     for day, vals in allocations.items():
-        rows.append(
-            [day, f"{vals[0]:.{decimal_places}f}"]
-            + [f"{v:.{decimal_places}f}" for v in vals[1:]]
-        )
+        row = [day, f"{vals[0]:.{decimal_places}f}"] + [
+            f"{v:.{decimal_places}f}" for v in vals[1:]
+        ]
+        if include_sum:
+            cat_sum = sum(vals[1:])
+            row.append(f"{cat_sum:.{decimal_places}f}")
+        rows.append(row)
     if include_sum:
         cols = len(next(iter(allocations.values())))
         sums = [sum(v[i] for v in allocations.values()) for i in range(cols)]
-        rows.append(["Sum"] + [f"{s:.{decimal_places}f}" for s in sums])
+        sum_row = ["Sum", f"{sums[0]:.{decimal_places}f}"] + [
+            f"{s:.{decimal_places}f}" for s in sums[1:]
+        ]
+        if include_sum:
+            per_day_cat_sum = sum(sums[1:])
+            sum_row.append(f"{per_day_cat_sum:.{decimal_places}f}")
+        rows.append(sum_row)
         if show_actual_percent:
             actuals = compute_actual_percentages(allocations)
-            # format percentage values (multiply by 100)
-            rows.append(
+            actual_row = (
                 ["Actual %"]
                 + [""]
                 + [f"{a * 100:.{decimal_places}f}%" for a in actuals]
             )
+            if include_sum:
+                actual_row.append("")
+            rows.append(actual_row)
         if len(targets) == cols - 1:
             diffs = [sums[i + 1] - targets[i] for i in range(cols - 1)]
-            rows.append(["Delta"] + ["-"] + [f"{d:+.{decimal_places}f}" for d in diffs])
+            delta_row = ["Delta"] + ["-"] + [f"{d:+.{decimal_places}f}" for d in diffs]
+            if include_sum:
+                delta_row.append("")
+            rows.append(delta_row)
     if show_remainder and remainder > 0.0001:
-        rows.append(
-            ["Remainder", f"{remainder:.{decimal_places}f}"] + ["" for _ in percentages]
-        )
+        rem_row = ["Remainder", f"{remainder:.{decimal_places}f}"] + [
+            "" for _ in percentages
+        ]
+        if include_sum:
+            rem_row.append("")
+        rows.append(rem_row)
     col_widths = [
         max(len(str(cell)) for cell in col) + 2
         for col in zip(headers, *rows, strict=True)
@@ -250,16 +269,47 @@ def allocate_sequential(
         out[last_day][i + 1] = round_to_resolution(
             out[last_day][i + 1] + drift, resolution
         )
-    # Remainder = unallocated portion
+    adjust_per_day_residuals(out, days, resolution, n)
     allocated_sum = sum(sum(v[1:]) for v in out.values())
-    remainder = max(0.0, total - allocated_sum)
+    remainder = max(0.0, round_to_resolution(total - allocated_sum, resolution))
     return out, quotas, remainder
+
+
+def adjust_per_day_residuals(
+    allocations: dict[str, list[float]],
+    days: dict[str, float],
+    resolution: float,
+    n_categories: int,
+) -> None:
+    """Adjust per-day residuals by applying any rounding differences to the last category.
+
+    After distributing across categories, ensure each day's category allocations
+    sum to the day's total by applying any per-day residual (due to rounding)
+    to the last category for that day (if possible). This preserves per-day totals
+    and keeps adjustments within resolution granularity.
+
+    Args:
+        allocations: Dictionary mapping day -> [total, cat1, cat2, ...]
+        days: Dictionary mapping day -> total hours
+        resolution: Rounding resolution in hours
+        n_categories: Number of categories
+    """
+    for d, h in days.items():
+        cat_sum = sum(allocations[d][1:])
+        residual = round_to_resolution(h - cat_sum, resolution)
+        if abs(residual) >= resolution - 1e-9:
+            last_idx = n_categories
+            allocations[d][last_idx] = round_to_resolution(
+                allocations[d][last_idx] + residual, resolution
+            )
+        else:
+            # For tiny floating differences smaller than resolution, snap to zero
+            pass  # (no change needed)
 
 
 def allocate_optimal(
     days: dict[str, float], percentages: list[float], resolution: float
 ) -> tuple[dict[str, list[float]], list[float], float]:
-    # Discrete unit allocation using largest remainder method at chosen resolution
     factor = int(round(1 / resolution))
     if abs(factor * resolution - 1.0) > 1e-9:
         raise ValueError("Resolution must evenly divide 1.0 (e.g. 1, 0.5, 0.25, 0.2)")
@@ -268,7 +318,6 @@ def allocate_optimal(
     raw_targets = [p * total_units for p in percentages]
     floors = [int(t) for t in raw_targets]
     remainders = [(i, raw_targets[i] - floors[i]) for i in range(len(percentages))]
-    # Assign leftover units only up to sum of raw_targets (if sum < total_units remainder persists)
     assigned = sum(floors)
     target_sum = sum(raw_targets)
     free_for_targets = min(total_units - assigned, int(round(target_sum - assigned)))
@@ -278,7 +327,6 @@ def allocate_optimal(
             break
         target_units[i] += 1
         free_for_targets -= 1
-    # Greedy allocation: fill categories with highest remaining units first per day
     alloc_units = {d: [units_per_day[d]] + [0] * len(percentages) for d in days.keys()}
     remaining_units = target_units[:]
     for day in days.keys():
@@ -295,7 +343,6 @@ def allocate_optimal(
             alloc_units[day][idx + 1] += 1
             remaining_units[idx] -= 1
             used += 1
-    # Convert back to hours
     allocations = {
         d: [vals[0] / factor] + [v / factor for v in vals[1:]]
         for d, vals in alloc_units.items()
@@ -403,7 +450,6 @@ if __name__ == "__main__":
         raise ValueError("Number of days must match number of hours")
     if sum(percentages) > 1.0 and not args.normalize:
         raise ValueError("Percentages must sum to 1.0 or less (or use --normalize)")
-    # Canonicalize day names
     abbrev_map = {
         "mon": "monday",
         "tue": "tuesday",
@@ -456,12 +502,9 @@ if __name__ == "__main__":
         ]
         day_dict = dict(zip(all_days[: len(args.hours)], args.hours, strict=True))
 
-    # Choose algorithm
     resolution = args.resolution
-    # Basic validation of resolution
     if resolution <= 0:
         raise ValueError("Resolution must be positive")
-    # Ensure resolution divides 1.0 within tolerance (so discrete units are integral)
     if abs(round(1 / resolution) * resolution - 1.0) > 1e-9:
         raise ValueError("Resolution must evenly divide 1.0 (e.g. 1, 0.5, 0.25, 0.2)")
 
@@ -474,12 +517,9 @@ if __name__ == "__main__":
             day_dict, percentages, resolution
         )
 
-    # Optionally fill remainder hours into last category where space exists
     if args.fill_remainder and remainder > 0.0001:
-        # Available slack per day
-        last_idx = len(percentages)  # index inside allocations values
+        last_idx = len(percentages)
         remaining_to_fill = remainder
-        # Iterate days in order attempting resolution increments
         while remaining_to_fill + 1e-9 >= resolution:
             progress = False
             for _d, vals in allocations.items():
@@ -493,14 +533,10 @@ if __name__ == "__main__":
                     if remaining_to_fill < resolution:
                         break
             if not progress:
-                break  # no more slack available
-        remainder = remaining_to_fill  # leftover remainder
-        # Update targets last category to reflect additional allocation intention
-        targets[-1] += (
-            remainder - remaining_to_fill
-        )  # conceptually unchanged, but keep for consistency
+                break
+        remainder = remaining_to_fill
+        targets[-1] += remainder - remaining_to_fill
 
-    # Strict mode attempt final fill if remainder remains
     if args.strict and remainder > 0.0001:
         last_idx = len(percentages)
         remaining_to_fill = remainder
@@ -524,7 +560,6 @@ if __name__ == "__main__":
                 f"Strict mode: unable to allocate remainder ({remainder:.2f}h)"
             )
 
-    # Render table
     _render_table(
         allocations,
         percentages,
@@ -536,7 +571,6 @@ if __name__ == "__main__":
         show_actual_percent=bool(args.show_actual_percent),
     )
 
-    # CSV export
     if args.csv:
         try:
             import csv
@@ -549,9 +583,7 @@ if __name__ == "__main__":
                     writer.writerow(
                         [d] + [f"{vals[0]:.2f}"] + [f"{v:.2f}" for v in vals[1:]]
                     )
-                # Summary rows
                 if args.sum:
-                    # compute number of columns from any allocation row
                     sample_cols = (
                         len(next(iter(allocations.values()))) if allocations else 1
                     )
@@ -567,11 +599,8 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"CSV export failed: {e}")
 
-    # JSON export
     if args.json:
         try:
-            import json
-
             payload: dict[str, Any] = {
                 "days": list(day_dict.keys()),
                 "percentages": percentages,
